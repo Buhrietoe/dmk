@@ -1,0 +1,19 @@
+##########################################
+####        dmk - Docker make         ####
+#### https://github.com/Buhrietoe/dmk ####
+##########################################
+
+# Image name
+DMKIMAGE="my.docker.registry.com/stuff/myimage:latest"
+
+# Ports exposed
+PORTS=("8080/tcp" "8888/tcp")
+
+# Optional defaults
+#DOCKERFILEPATH="."
+#WWWBUILDPORT="8000"
+#WWWBUILDURL="http://172.17.0.1:$WWWBUILDPORT"
+#PROXY=""
+#NOPROXY=""
+#DOCKERUID="0"
+#DOCKERGID="$DOCKERUID"

@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Docker make - Easily iterate on dockerfile development
+# Written by: Jason Gardner
+# https://github.com/Buhrietoe/dmk
+
+# This has a webserver feature. A simple python HTTP server is
+# instantiated so that you can curl/wget artifacts from the current
+# directory in your Dockerfile rather than using ADD/COPY.
+# This reduces the number of image layers in your build and allows
+# actions such as chown/chmod after the add without duplicating
+# filesize. This also decreases time to complete the build.
+#
+# example Dockerfile using webserver feature:
+# ARG WWWBUILDURL
+# RUN curl -SsL ${WWWBUILDURL}/myfile -o /usr/local/bin/myfile
+
+usage() {
+    echo "dmk must be run in a directory with a .dmk file"
+    echo "Available commands are:"
+    echo "  help - This text"
+    echo "  build - Build the image (default if no command specified)"
+    echo "  run - Run the image "
+    echo "  run X - Run the image with X support"
+    echo "  push - Push the image to the registry"
+    echo "  pull - Pull the image from the registry"
+    echo "  clean - Remove the image locally"
+    echo "  squash - Flatten the container image layers into a single layer."
+    echo "           Useful to show how terrible you write Dockerfiles ;)"
+}
+
+run() {
+    if [[ ${1} == "X" ]]; then
+        local X=1
+        shift
+    fi
+
+    # launch with or without X
+    if [[ -n ${X} ]]; then
+        # Only tested on Archlinux
+        local KEY=$(xauth list | grep $(hostname) | awk '{ print $3 }' | head -n 1)
+        local DPYNAME=${SHORTNAME}/unix${DISPLAY}
+        xauth add ${DPYNAME} . ${KEY}
+
+        docker run --name ${SHORTNAME} -it --rm \
+            -h ${SHORTNAME} \
+            -u ${DOCKERUID}:${DOCKERGID} \
+            -e http_proxy=${PROXY} \
+            -e https_proxy=${PROXY} \
+            -e no_proxy=${NOPROXY} \
+            -e DISPLAY=unix${DISPLAY} \
+            -e XAUTHORITY=/tmp/.Xauthority  \
+            -v ${HOME}/.Xauthority:/tmp/.Xauthority \
+            -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+            $(for PORT in ${PORTS[@]}; do echo " --publish $(echo ${PORT} | cut -d/ -f 1):${PORT}"; done) \
+            ${DMKIMAGE} $@
+
+        xauth remove ${DPYNAME}
+    else
+        docker run --name ${SHORTNAME} -it --rm \
+            -h ${SHORTNAME} \
+            -u ${DOCKERUID}:${DOCKERGID} \
+            -e http_proxy=${PROXY} \
+            -e https_proxy=${PROXY} \
+            -e no_proxy=${NOPROXY} \
+            $(for PORT in ${PORTS[@]}; do echo " --publish $(echo ${PORT} | cut -d/ -f 1):${PORT}"; done) \
+            ${DMKIMAGE} $@
+    fi
+}
+
+push() {
+    docker push ${DMKIMAGE}
+}
+
+pull() {
+    docker pull ${DMKIMAGE}
+}
+
+clean() {
+    docker rmi ${DMKIMAGE}
+}
+
+load_info() {
+    if [[ -f ${PWD}/.dmk ]]; then
+        source ${PWD}/.dmk
+    else
+        echo "ERROR: no .dmk file found"
+        usage
+        exit 1
+    fi
+}
+
+build_init() {
+    # Initialize build environment
+    echo Starting build webserver...
+    trap build_shutdown INT
+    python2 -m SimpleHTTPServer ${WWWBUILDPORT} &
+    WWWBUILDPID=$!
+    sleep 0.5
+}
+
+build_shutdown() {
+    echo Stopping build webserver...
+    kill -1 ${WWWBUILDPID}
+}
+
+build() {
+    build_init
+
+    # build container
+    pushd ${DOCKERFILEPATH}
+    docker build -t ${DMKIMAGE} \
+        --build-arg http_proxy=${PROXY} \
+        --build-arg https_proxy=${PROXY} \
+        --build-arg no_proxy=${NOPROXY} \
+        --build-arg WWWBUILDURL=${WWWBUILDURL} \
+        . $@
+    popd 1>/dev/null
+
+    echo -e "\nBuilt image:"
+    docker images ${DMKIMAGE}
+
+    build_shutdown
+}
+
+squash() {
+    docker export $(docker create --name export ${DMKIMAGE}) | docker import -m squashed - ${DMKIMAGE}-squashed 1>/dev/null
+    docker rm export 1>/dev/null
+    docker images $(echo ${DMKIMAGE} | cut -d: -f 1)
+}
+
+# Grab command and shift it off
+CMD=${1}
+shift 1
+
+# Read the .dmk file in the current directory
+load_info
+
+# Friendly name for image
+SHORTNAME=$(basename ${DMKIMAGE} | cut -d: -f 1)
+
+# Set optional defaults
+: ${DOCKERFILEPATH:="."}
+: ${WWWBUILDPORT:="8000"}
+: ${WWWBUILDURL:="http://172.17.0.1:$WWWBUILDPORT"}
+: ${PROXY:=""}
+: ${NOPROXY:=""}
+: ${DOCKERUID:="0"}
+: ${DOCKERGID:="$DOCKERUID"}
+
+case ${CMD} in
+    "build" )
+        build;;
+    "run" )
+        run ${@};;
+    "push" )
+        push;;
+    "pull" )
+        pull;;
+    "clean" )
+        clean;;
+    "squash" )
+        squash;;
+    "help" )
+        usage;;
+    * )
+        build;;
+esac
