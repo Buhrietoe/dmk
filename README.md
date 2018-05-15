@@ -42,7 +42,7 @@ Copy the .dmk.EXAMPLE file into your project as .dmk alongside your Dockerfile a
 
 First-time installation:
 
-    curl -sSL https://github.com/Buhrietoe/dmk -o dmk
+    curl -SL https://github.com/Buhrietoe/dmk/raw/master/dmk -o dmk
 
 Copy the binary to your $PATH and make it executable.
 
